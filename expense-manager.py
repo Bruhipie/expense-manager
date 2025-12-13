@@ -151,11 +151,117 @@ def expense_add_view(event):
     '''Main UI where the Frame is split into two sections: Left one where the user can add new expenses,
     and the Right one where user can see his last 50 sections (the limit can be changed)
     '''
-    global user_id, cursor
+    global user_id, cursor, con
 
-    if user_id is None:
-        wx.MessageBox("You must be logged in to add/view expenses", "Authentication Required", wx.OK | wx.ICON_WARNING)
-        login_ui(None)
+    try:
+        if user_id is None:
+            wx.MessageBox("You must be logged in to add/view expenses", "Authentication Required", wx.OK | wx.ICON_WARNING)
+            login_ui(None)
+            return
+
+        # Use an attribute on main_Frame to keep a reference and prevent garbage collection
+        # Also, if it already exists, Raise it instead of creating a new one 
+        if hasattr(main_Frame, 'add_view_window') and main_Frame.add_view_window:
+            try:
+                main_Frame.add_view_window.Raise()
+                return
+            except:
+                # If the window was destroyed but the reference remains, continue to recreate
+                pass
+        
+        add_view_Frame = wx.Frame(main_Frame, title="Add / View Expenses", size=(600, 400))
+        main_Frame.add_view_window = add_view_Frame # Keep reference
+        
+        panel = wx.Panel(add_view_Frame)
+
+        # UI Elements for Adding Expense
+        wx.StaticText(panel, label="Add New Expense", pos=(20, 10)).SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+
+        wx.StaticText(panel, label="Amount:", pos=(20, 50))
+        amount_input = wx.TextCtrl(panel, pos=(100, 45))
+
+        wx.StaticText(panel, label="Category:", pos=(20, 90))
+        categories = ["Food", "Transport", "Shopping", "Entertainment", "Utilities", "Other"]
+        category_input = wx.ComboBox(panel, pos=(100, 85), choices=categories)
+
+        wx.StaticText(panel, label="Description:", pos=(20, 130))
+        desc_input = wx.TextCtrl(panel, pos=(100, 125))
+
+        save_btn = wx.Button(panel, label="Save Expense", pos=(100, 170))
+
+        # UI Elements for Viewing Expenses
+        wx.StaticText(panel, label="Recent Expenses", pos=(300, 10)).SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        
+        expense_list = wx.ListCtrl(panel, pos=(300, 45), size=(260, 300), style=wx.LC_REPORT | wx.BORDER_SUNKEN)
+        expense_list.InsertColumn(0, 'Date', width=80)
+        expense_list.InsertColumn(1, 'Category', width=80)
+        expense_list.InsertColumn(2, 'Amount', width=80)
+
+        def refresh_list():
+            try:
+                expense_list.DeleteAllItems()
+                if cursor:
+                    # Fetch last 50 expenses
+                    rows = cursor.execute("SELECT time, category, amount FROM Expenses WHERE user_id=? ORDER BY time DESC LIMIT 50", (user_id,))
+                    for row in rows:
+                        row_date = str(row[0])
+                        # Handle potential different date formats
+                        display_date = row_date.split()[0] if ' ' in row_date else row_date
+                        
+                        index = expense_list.InsertItem(0, display_date) 
+                        expense_list.SetItem(index, 1, str(row[1]))
+                        expense_list.SetItem(index, 2, str(row[2]))
+            except Exception as e:
+                wx.MessageBox(f"Error loading list: {e}", "Error", wx.OK | wx.ICON_ERROR)
+                print(f"List Error: {e}")
+
+        def save_expense(event):
+            try:
+                val = amount_input.GetValue()
+                if not val:
+                    wx.MessageBox("Please enter an amount.", "Input Error", wx.OK | wx.ICON_ERROR)
+                    return
+                amount = float(val)
+                
+                category = category_input.GetValue()
+                if not category:
+                    wx.MessageBox("Please select or enter a category.", "Input Error", wx.OK | wx.ICON_ERROR)
+                    return
+                    
+                description = desc_input.GetValue()
+                date_time = datetime.now() # Use current time
+                date_time = date_time.replace(microsecond=0)
+
+                query = "INSERT INTO Expenses (user_id, time, amount, category, description) VALUES (?, ?, ?, ?, ?)"
+                cursor.execute(query, (user_id, date_time, amount, category, description))
+                con.commit()
+                
+                wx.MessageBox("Expense added successfully!", "Success", wx.OK | wx.ICON_INFORMATION)
+                
+                # Clear inputs
+                amount_input.SetValue("")
+                desc_input.SetValue("")
+                
+                refresh_list()
+
+            except ValueError:
+                wx.MessageBox("Invalid Amount. Please enter a valid number.", "Input Error", wx.OK | wx.ICON_ERROR)
+            except sqlite3.Error as e:
+                wx.MessageBox(f"Database Error: {e}", "Error", wx.OK | wx.ICON_ERROR)
+            except Exception as e:
+                wx.MessageBox(f"Unexpected Error: {e}", "Error", wx.OK | wx.ICON_ERROR)
+                print(f"Save Error: {e}")
+
+        save_btn.Bind(wx.EVT_BUTTON, save_expense)
+        
+        # Load initial data
+        refresh_list()
+        
+        add_view_Frame.Show()
+        
+    except Exception as e:
+        wx.MessageBox(f"Failed to open window: {e}", "Critical Error", wx.OK | wx.ICON_ERROR)
+        print(f"Window Error: {e}")
 
 def statistics(event):
 
@@ -175,7 +281,7 @@ def statistics(event):
             return None
         
         # Convert timestamp if stored as string
-        df['time'] = pd.to_datetime(df['time'])
+        df['time'] = pd.to_datetime(df['time'], format="%Y-%m-%d %H:%M:%S")
         return df
 
 
